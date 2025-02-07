@@ -518,15 +518,26 @@ class RingGroup : public GroupImpl {
       std::memcpy(output.data<char>(), input.data<char>(), input.nbytes());
     }
 
+    auto right = pool_.enqueue([this, &output]() {
+      all_sum<T>(
+          send_sockets_[0],
+          recv_sockets_[0],
+          rank_,
+          size_,
+          output.data<T>() + output.size() / 2,
+          output.size() - output.size() / 2,
+          reinterpret_cast<T**>(rx_buffers_),
+          -1);
+    });
     all_sum<T>(
-        send_sockets_[0],
         recv_sockets_[0],
+        send_sockets_[0],
         rank_,
         size_,
         output.data<T>(),
-        output.size(),
-        reinterpret_cast<T**>(rx_buffers_),
-        -1);
+        output.size() / 2,
+        reinterpret_cast<T**>(rx_buffers_ + 2),
+        1);
   }
 
   template <typename T>
