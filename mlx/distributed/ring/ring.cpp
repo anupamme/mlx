@@ -518,26 +518,132 @@ class RingGroup : public GroupImpl {
       std::memcpy(output.data<char>(), input.data<char>(), input.nbytes());
     }
 
-    auto right = pool_.enqueue([this, &output]() {
-      all_sum<T>(
+    std::atomic<int> bs, br;
+    auto sent = pool_.enqueue([&, this]() {
+      all_sum_send<T>(
+          bs,
+          br,
           send_sockets_[0],
+          rank_,
+          size_,
+          output.data<T>(),
+          output.size(),
+          -1);
+    });
+    auto recvd = pool_.enqueue([&, this]() {
+      all_sum_recv<T>(
+          bs,
+          br,
           recv_sockets_[0],
           rank_,
           size_,
-          output.data<T>() + output.size() / 2,
-          output.size() - output.size() / 2,
-          reinterpret_cast<T**>(rx_buffers_),
+          output.data<T>(),
+          reinterpret_cast<T**>(rx_buffers_)[0],
+          output.size(),
           -1);
     });
-    all_sum<T>(
-        recv_sockets_[0],
-        send_sockets_[0],
-        rank_,
-        size_,
-        output.data<T>(),
-        output.size() / 2,
-        reinterpret_cast<T**>(rx_buffers_ + 2),
-        1);
+    sent.wait();
+    recvd.wait();
+
+    // all_sum<T>(
+    //     send_sockets_[0],
+    //     recv_sockets_[0],
+    //     rank_,
+    //     size_,
+    //     output.data<T>(),
+    //     output.size(),
+    //     reinterpret_cast<T**>(rx_buffers_),
+    //     -1);
+  }
+
+  template <typename T>
+  void all_sum_send(
+      std::atomic<int>& blocks_sent,
+      std::atomic<int>& blocks_recvd,
+      int socket,
+      int rank,
+      int size,
+      T* data,
+      size_t data_size,
+      int direction = -1) {
+    // We split the data into `size_` segments of size `segment_size`.
+    // Subsequently each segment to smaller segments of PACKET_SIZE
+    size_t segment_size = ceildiv(data_size, size);
+    size_t P = PACKET_SIZE / sizeof(T);
+    size_t n_packets = ceildiv(segment_size, P);
+
+    // Initial segment to send
+    int segment = rank;
+
+    // Scatter reduce
+    for (int i = 0; i < size - 1; i++) {
+      size_t start = segment * segment_size;
+      size_t stop = std::min((segment + 1) * segment_size, data_size);
+
+      for (size_t a = start; a < stop; a += P) {
+        _send(socket, data, a, std::min(a + P, stop));
+      }
+
+      segment = (segment + size + direction) % size;
+    }
+
+    // Gather reduce
+    for (int i = 0; i < size - 1; i++) {
+      size_t start = segment * segment_size;
+      size_t stop = std::min((segment + 1) * segment_size, data_size);
+
+      for (size_t a = start; a < stop; a += P) {
+        _send(socket, data, a, std::min(a + P, stop));
+      }
+
+      segment = (segment + size + direction) % size;
+    }
+  }
+
+  template <typename T>
+  void all_sum_recv(
+      std::atomic<int>& blocks_sent,
+      std::atomic<int>& blocks_recvd,
+      int socket,
+      int rank,
+      int size,
+      T* data,
+      T* recv_buffer,
+      size_t data_size,
+      int direction = -1) {
+    // We split the data into `size_` segments of size `segment_size`.
+    // Subsequently each segment to smaller segments of PACKET_SIZE
+    size_t segment_size = ceildiv(data_size, size);
+    size_t P = PACKET_SIZE / sizeof(T);
+    size_t n_packets = ceildiv(segment_size, P);
+
+    // Initial segment to send
+    int segment = (rank + size + direction) % size;
+
+    // Scatter reduce
+    for (int i = 0; i < size - 1; i++) {
+      size_t start = segment * segment_size;
+      size_t stop = std::min((segment + 1) * segment_size, data_size);
+
+      for (size_t a = start; a < stop; a += P) {
+        _recv(socket, recv_buffer, 0, std::min(a + P, stop) - a);
+        sum_inplace<T>(recv_buffer, data + a, std::min(a + P, stop) - a);
+      }
+
+      segment = (segment + size + direction) % size;
+    }
+
+    // Gather reduce
+    for (int i = 0; i < size - 1; i++) {
+      size_t start = segment * segment_size;
+      size_t stop = std::min((segment + 1) * segment_size, data_size);
+
+      for (size_t a = start; a < stop; a += P) {
+        _recv(socket, data, a, std::min(a + P, stop));
+      }
+
+      segment = (segment + size + direction) % size;
+    }
   }
 
   template <typename T>
