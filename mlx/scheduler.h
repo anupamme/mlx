@@ -8,6 +8,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include "mlx/backend/cpu/task.h"
 #include "mlx/backend/metal/metal.h"
 #include "mlx/backend/metal/metal_impl.h"
 #include "mlx/device.h"
@@ -20,16 +21,11 @@ struct StreamThread {
   std::queue<std::function<void()>> q;
   std::condition_variable cond;
   bool stop;
-  Stream stream;
   std::thread thread;
 
-  StreamThread(Stream stream)
-      : stop(false), stream(stream), thread(&StreamThread::thread_fn, this) {
-    metal::new_stream(stream);
-  }
+  StreamThread() : stop(false), thread(&StreamThread::thread_fn, this) {}
 
   ~StreamThread() {
-    synchronize(stream);
     {
       std::lock_guard<std::mutex> lk(mtx);
       stop = true;
@@ -86,7 +82,11 @@ class Scheduler {
 
   Stream new_stream(const Device& d) {
     auto stream = Stream(streams_.size(), d);
-    streams_.push_back(new StreamThread{stream});
+    if (d == Device::gpu) {
+      metal::new_stream(stream);
+    } else {
+      threads_.push_back(new StreamThread{});
+    }
     return stream;
   }
 
@@ -97,7 +97,7 @@ class Scheduler {
     return default_streams_.at(d.type);
   }
   Stream get_stream(int index) const {
-    return streams_.at(index)->stream;
+    return streams_.at(index);
   }
 
   void set_default_stream(const Stream& s) {
@@ -136,13 +136,19 @@ class Scheduler {
 
   ~Scheduler() {
     for (auto s : streams_) {
-      delete s;
+      synchronize(s);
+    }
+    for (auto t : threads_) {
+      if (t != nullptr) {
+        delete t;
+      }
     }
   }
 
  private:
   int n_active_tasks_;
-  std::vector<StreamThread*> streams_;
+  std::vector<StreamThread*> threads_;
+  std::vector<Stream> streams_;
   std::unordered_map<Device::DeviceType, Stream> default_streams_;
   std::condition_variable completion_cv;
   std::mutex mtx;
@@ -150,7 +156,7 @@ class Scheduler {
 
 template <typename F>
 void Scheduler::enqueue(const Stream& stream, F&& f) {
-  streams_[stream.index]->enqueue(std::forward<F>(f));
+  threads_[stream.index]->enqueue(std::forward<F>(f));
 }
 
 Scheduler& scheduler();

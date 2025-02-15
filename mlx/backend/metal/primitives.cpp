@@ -10,7 +10,6 @@
 #include "mlx/backend/common/utils.h"
 #include "mlx/backend/metal/copy.h"
 #include "mlx/backend/metal/device.h"
-#include "mlx/backend/metal/event.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/slicing.h"
 #include "mlx/backend/metal/utils.h"
@@ -302,31 +301,31 @@ void Unflatten::eval_gpu(const std::vector<array>& inputs, array& out) {
 }
 
 void Load::eval_gpu(const std::vector<array>& inputs, array& out) {
-  out.set_data(allocator::malloc_or_wait(out.nbytes()));
-  auto read_task = [out = unsafe_weak_copy(out),
-                    offset = offset_,
-                    reader = reader_,
-                    swap_endianness = swap_endianness_]() mutable {
-    load(out, offset, reader, swap_endianness);
-  };
+  /*  out.set_data(allocator::malloc_or_wait(out.nbytes()));
+    auto read_task = [out = unsafe_weak_copy(out),
+                      offset = offset_,
+                      reader = reader_,
+                      swap_endianness = swap_endianness_]() mutable {
+      load(out, offset, reader, swap_endianness);
+    };
 
-  // Limit the size that the command buffer will wait on to avoid timing out
-  // on the event (<4 seconds).
-  if (out.nbytes() > (1 << 28)) {
-    read_task();
-    return;
-  }
+    // Limit the size that the command buffer will wait on to avoid timing out
+    // on the event (<4 seconds).
+    if (out.nbytes() > (1 << 28)) {
+      read_task();
+      return;
+    }
 
-  auto fut = io::thread_pool().enqueue(std::move(read_task)).share();
+    auto fut = io::thread_pool().enqueue(std::move(read_task)).share();
 
-  auto e = Event(stream());
-  e.set_value(1);
-  encode_wait(e);
-  auto signal_task = [e = std::move(e), fut = std::move(fut)]() mutable {
-    fut.wait();
-    e.signal();
-  };
-  scheduler::enqueue(io_stream(), std::move(signal_task));
+    auto e = Event(stream());
+    e.set_value(1);
+    encode_wait(e);
+    auto signal_task = [e = std::move(e), fut = std::move(fut)]() mutable {
+      fut.wait();
+      e.signal();
+    };
+    scheduler::enqueue(io_stream(), std::move(signal_task));*/
 }
 
 void NumberOfElements::eval_gpu(const std::vector<array>& inputs, array& out) {

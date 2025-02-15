@@ -65,6 +65,7 @@ target_sources(
           ${CMAKE_CURRENT_SOURCE_DIR}/inverse.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/cholesky.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/unary.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/task.cpp
           ${CMAKE_CURRENT_BINARY_DIR}/compiled_preamble.cpp)
 
 if(MLX_BUILD_ACCELERATE)
